@@ -1,0 +1,32 @@
+# Virtual environments
+.venv/
+__pycache__/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Rust build
+target/
+
+# Tauri generated schemas
+app/src-tauri/gen/
+
+# Build output
+app/dist/
+
+# Data (symlinked to ~/Data/Praeceptor/data/)
+datagen/data
+
+# OS
+.DS_Store
+
+# Training artifacts
+training/checkpoints/
+training/samples/
+training/logs/
+
+# JWildfire runtime
+datagen/jwildfire/lib/
+datagen/jwildfire/scripts/
+datagen/jwildfire/params/
