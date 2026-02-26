@@ -1,7 +1,0 @@
-numpy>=1.26
-pillow>=10.0
-scipy>=1.11
-numba>=0.59
-tqdm>=4.66
-click>=8.1
-imagehash>=4.3

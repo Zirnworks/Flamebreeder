@@ -1,3 +1,0 @@
-[console_scripts]
-flamegen = flamegen.generate_batch:main
-preprocess = preprocessing.build_dataset:main

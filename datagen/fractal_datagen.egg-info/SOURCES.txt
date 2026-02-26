@@ -1,9 +1,0 @@
-pyproject.toml
-flamegen/__init__.py
-fractal_datagen.egg-info/PKG-INFO
-fractal_datagen.egg-info/SOURCES.txt
-fractal_datagen.egg-info/dependency_links.txt
-fractal_datagen.egg-info/entry_points.txt
-fractal_datagen.egg-info/requires.txt
-fractal_datagen.egg-info/top_level.txt
-preprocessing/__init__.py

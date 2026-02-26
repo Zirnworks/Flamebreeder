@@ -1,5 +1,0 @@
-Declan Russell's Site:
-https://declanrussell.com/portfolio/nvidia-ai-denoiser/
-
-Source Code:
-https://github.com/DeclanRussell/NvidiaAIDenoiser
