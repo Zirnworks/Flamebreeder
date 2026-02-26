@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicepkg/gpt-runner/main/packages/gpt-runner-web/assets/tauri-v2.schema.json",
+  "productName": "Fractal Breeder",
+  "version": "0.1.0",
+  "identifier": "com.praeceptor.fractal-breeder",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Fractal Breeder",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

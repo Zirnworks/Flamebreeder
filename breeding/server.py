@@ -1,0 +1,332 @@
+"""FastAPI inference server for fractal flame GAN breeding.
+
+Runs as a sidecar process alongside the Tauri desktop app.
+Provides endpoints for generation, breeding, interpolation, and genome management.
+All latent operations happen in W-space for smooth, disentangled results.
+"""
+
+import base64
+import io
+import os
+from pathlib import Path
+
+import torch
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from .inference import FlameGenerator
+from .breeding import BREEDING_METHODS, mutate, truncate_w
+from .interpolation import interpolation_strip
+from .genome import Genome, GenomeStore
+
+app = FastAPI(title="Fractal Flame Breeder", version="0.2.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global state — initialized on startup
+generator: FlameGenerator | None = None
+store: GenomeStore | None = None
+
+
+def image_to_base64(img) -> str:
+    """Convert PIL Image to base64-encoded PNG string."""
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+# --- Request/Response Models ---
+
+class GenerateRequest(BaseModel):
+    count: int = Field(default=4, ge=1, le=16)
+    truncation_psi: float = Field(default=0.7, ge=0.0, le=1.0)
+
+class GenomeResponse(BaseModel):
+    id: str
+    image_base64: str
+    genome: dict
+
+class BreedRequest(BaseModel):
+    parent_a_id: str
+    parent_b_id: str
+    method: str = "average"
+    params: dict = Field(default_factory=dict)
+    count: int = Field(default=1, ge=1, le=8)
+
+class InterpolateRequest(BaseModel):
+    genome_a_id: str
+    genome_b_id: str
+    steps: int = Field(default=10, ge=2, le=64)
+    method: str = "slerp"
+
+class MutateRequest(BaseModel):
+    genome_id: str
+    rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    strength: float = Field(default=0.3, ge=0.0, le=2.0)
+
+class UpdateGenomeRequest(BaseModel):
+    tags: list[str] | None = None
+    favorite: bool | None = None
+
+
+# --- Endpoints ---
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model_loaded": generator is not None,
+        "latent_space": "w",
+        "w_dim": generator.w_dim if generator else None,
+    }
+
+
+@app.post("/generate", response_model=list[GenomeResponse])
+def generate(req: GenerateRequest):
+    """Generate random fractal flame images."""
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    images, w_batch = generator.generate_random(
+        req.count, truncation_psi=req.truncation_psi
+    )
+    results = []
+
+    for img, w in zip(images, w_batch):
+        genome = Genome(
+            latent_vector=w.tolist(),
+            latent_space="w",
+            truncation_psi=req.truncation_psi,
+            generation=0,
+        )
+        store.add(genome)
+        results.append(GenomeResponse(
+            id=genome.id,
+            image_base64=image_to_base64(img),
+            genome=genome.to_dict(),
+        ))
+
+    return results
+
+
+@app.post("/breed", response_model=list[GenomeResponse])
+def breed(req: BreedRequest):
+    """Breed two parent genomes to produce offspring."""
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    parent_a = store.get(req.parent_a_id)
+    parent_b = store.get(req.parent_b_id)
+    if parent_a is None or parent_b is None:
+        raise HTTPException(404, "Parent genome not found")
+
+    if req.method not in BREEDING_METHODS:
+        raise HTTPException(400, f"Unknown method: {req.method}. Options: {list(BREEDING_METHODS)}")
+
+    breed_fn = BREEDING_METHODS[req.method]
+    w_a = torch.tensor(parent_a.latent_vector, dtype=torch.float32)
+    w_b = torch.tensor(parent_b.latent_vector, dtype=torch.float32)
+
+    # Extract breeding-specific params (filter out server-level params)
+    psi = req.params.pop("truncation_psi", 0.7)
+    breed_params = {k: v for k, v in req.params.items()
+                    if k not in ("truncation_psi",)}
+
+    # For style_mix, inject num_ws from the generator
+    if req.method == "style_mix" and "num_ws" not in breed_params:
+        breed_params["num_ws"] = generator.num_ws
+
+    results = []
+    parent_gen = max(parent_a.generation, parent_b.generation)
+
+    for _ in range(req.count):
+        w_child = breed_fn(w_a, w_b, **breed_params)
+
+        # W-space truncation
+        if w_child.ndim == 1:
+            w_child = generator.truncate_w(w_child, psi=psi)
+            images = generator.generate_from_w(w_child.unsqueeze(0))
+            store_vector = w_child.tolist()
+        else:
+            # Style mixing returns (num_ws, w_dim) — truncate each layer
+            w_child = generator.truncate_w(w_child, psi=psi)
+            images = generator.generate_from_w(w_child.unsqueeze(0))
+            # Store the first layer's W for future flat-vector operations
+            store_vector = w_child[0].tolist()
+
+        genome = Genome(
+            latent_vector=store_vector,
+            latent_space="w",
+            truncation_psi=psi,
+            parents=(parent_a.id, parent_b.id),
+            breeding_method=req.method,
+            breeding_params=req.params,
+            generation=parent_gen + 1,
+        )
+        store.add(genome)
+        results.append(GenomeResponse(
+            id=genome.id,
+            image_base64=image_to_base64(images[0]),
+            genome=genome.to_dict(),
+        ))
+
+    return results
+
+
+@app.post("/interpolate", response_model=list[GenomeResponse])
+def interpolate(req: InterpolateRequest):
+    """Generate an interpolation strip between two genomes."""
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    genome_a = store.get(req.genome_a_id)
+    genome_b = store.get(req.genome_b_id)
+    if genome_a is None or genome_b is None:
+        raise HTTPException(404, "Genome not found")
+
+    w_a = torch.tensor(genome_a.latent_vector, dtype=torch.float32)
+    w_b = torch.tensor(genome_b.latent_vector, dtype=torch.float32)
+
+    w_strip = interpolation_strip(w_a, w_b, req.steps, method=req.method)
+    w_batch = torch.stack(w_strip)
+    images = generator.generate_from_w(w_batch)
+
+    results = []
+    for i, (img, w) in enumerate(zip(images, w_strip)):
+        genome = Genome(
+            latent_vector=w.tolist(),
+            latent_space="w",
+            parents=(genome_a.id, genome_b.id),
+            breeding_method=f"interpolate_{req.method}",
+            breeding_params={"t": i / (req.steps - 1)},
+            generation=max(genome_a.generation, genome_b.generation),
+        )
+        store.add(genome)
+        results.append(GenomeResponse(
+            id=genome.id,
+            image_base64=image_to_base64(img),
+            genome=genome.to_dict(),
+        ))
+
+    return results
+
+
+@app.post("/mutate", response_model=GenomeResponse)
+def mutate_endpoint(req: MutateRequest):
+    """Mutate a genome to produce a variant."""
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    parent = store.get(req.genome_id)
+    if parent is None:
+        raise HTTPException(404, "Genome not found")
+
+    w = torch.tensor(parent.latent_vector, dtype=torch.float32)
+    w_child = mutate(w, mutation_rate=req.rate, mutation_strength=req.strength)
+    w_child = generator.truncate_w(w_child, psi=0.7)
+
+    images = generator.generate_from_w(w_child.unsqueeze(0))
+    genome = Genome(
+        latent_vector=w_child.tolist(),
+        latent_space="w",
+        parents=(parent.id, parent.id),
+        breeding_method="mutate",
+        breeding_params={"rate": req.rate, "strength": req.strength},
+        generation=parent.generation + 1,
+    )
+    store.add(genome)
+
+    return GenomeResponse(
+        id=genome.id,
+        image_base64=image_to_base64(images[0]),
+        genome=genome.to_dict(),
+    )
+
+
+@app.get("/genome/{genome_id}")
+def get_genome(genome_id: str):
+    """Retrieve a genome by ID and regenerate its image."""
+    genome = store.get(genome_id)
+    if genome is None:
+        raise HTTPException(404, "Genome not found")
+
+    w = torch.tensor(genome.latent_vector, dtype=torch.float32).unsqueeze(0)
+    images = generator.generate_from_w(w)
+
+    return GenomeResponse(
+        id=genome.id,
+        image_base64=image_to_base64(images[0]),
+        genome=genome.to_dict(),
+    )
+
+
+@app.patch("/genome/{genome_id}")
+def update_genome(genome_id: str, req: UpdateGenomeRequest):
+    """Update genome metadata (tags, favorite)."""
+    genome = store.get(genome_id)
+    if genome is None:
+        raise HTTPException(404, "Genome not found")
+
+    if req.tags is not None:
+        genome.tags = req.tags
+    if req.favorite is not None:
+        genome.favorite = req.favorite
+
+    store.update(genome)
+    return genome.to_dict()
+
+
+@app.get("/genomes")
+def list_genomes():
+    """List all saved genomes (metadata only, no images)."""
+    return [g.to_dict() for g in store.all()]
+
+
+def start_server(
+    checkpoint_path: str,
+    data_dir: str = "~/.fractal-breeder",
+    host: str = "127.0.0.1",
+    port: int = 8420,
+    device: str = "mps",
+):
+    """Start the inference server."""
+    global generator, store
+
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
+    data_path = Path(data_dir).expanduser()
+    data_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"Loading StyleGAN2 model from {checkpoint_path}...")
+    generator = FlameGenerator(checkpoint_path, device=device)
+    store = GenomeStore(data_path / "genomes.json")
+
+    print(f"Model loaded: z_dim={generator.z_dim}, w_dim={generator.w_dim}, "
+          f"num_ws={generator.num_ws}")
+    print(f"Server starting on {host}:{port}")
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m breeding.server <checkpoint_path> [--port PORT] [--device DEVICE]")
+        sys.exit(1)
+
+    checkpoint = sys.argv[1]
+    port = 8420
+    device = "mps"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--port" and i + 1 < len(sys.argv):
+            port = int(sys.argv[i + 1])
+        if arg == "--device" and i + 1 < len(sys.argv):
+            device = sys.argv[i + 1]
+
+    start_server(checkpoint, port=port, device=device)

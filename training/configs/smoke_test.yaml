@@ -1,0 +1,30 @@
+# Smoke test config — tiny dataset, few steps
+latent_dim: 256
+image_size: 512
+gen_base_channels: 256
+disc_base_channels: 16
+
+batch_size: 4
+gradient_accumulate_every: 1
+num_train_steps: 20
+learning_rate_g: 0.0002
+learning_rate_d: 0.0002
+betas: [0.5, 0.999]
+recon_weight: 0.5
+ema_decay: 0.999
+
+aug_ops: ["color", "translation", "cutout"]
+aug_prob: 0.5
+
+save_every: 10
+evaluate_every: 10
+sample_every: 10
+sample_grid_size: 4
+
+dataset_path: "test_data"
+checkpoint_dir: "checkpoints/smoke"
+sample_dir: "samples/smoke"
+log_dir: "logs/smoke"
+
+device: "mps"
+num_workers: 0

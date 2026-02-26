@@ -1,0 +1,10 @@
+pyproject.toml
+data/__init__.py
+fractal_gan_training.egg-info/PKG-INFO
+fractal_gan_training.egg-info/SOURCES.txt
+fractal_gan_training.egg-info/dependency_links.txt
+fractal_gan_training.egg-info/entry_points.txt
+fractal_gan_training.egg-info/requires.txt
+fractal_gan_training.egg-info/top_level.txt
+model/__init__.py
+utils/__init__.py

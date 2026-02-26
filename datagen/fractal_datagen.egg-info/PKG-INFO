@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: fractal-datagen
+Version: 0.1.0
+Summary: Fractal flame training data generation pipeline
+Requires-Python: >=3.11
+Requires-Dist: numpy>=1.26
+Requires-Dist: pillow>=10.0
+Requires-Dist: scipy>=1.11
+Requires-Dist: numba>=0.59
+Requires-Dist: tqdm>=4.66
+Requires-Dist: click>=8.1
+Requires-Dist: imagehash>=4.3

@@ -1,0 +1,9 @@
+/Users/zirn/Documents/Vault/Agents/Praeceptor/app/src-tauri/target/debug/deps/objc2_javascript_core-8663ae7243fcdd90.d: /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/lib.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/mod.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSBase.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSContext.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSValue.rs
+
+/Users/zirn/Documents/Vault/Agents/Praeceptor/app/src-tauri/target/debug/deps/libobjc2_javascript_core-8663ae7243fcdd90.rmeta: /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/lib.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/mod.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSBase.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSContext.rs /Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSValue.rs
+
+/Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/lib.rs:
+/Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/mod.rs:
+/Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSBase.rs:
+/Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSContext.rs:
+/Users/zirn/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/objc2-javascript-core-0.3.2/src/generated/JSValue.rs:
