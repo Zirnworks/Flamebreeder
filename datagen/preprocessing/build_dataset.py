@@ -8,6 +8,7 @@ copies for later review and potential reintegration.
 """
 
 import json
+import random
 import shutil
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from .quality_filter import classify_image, apply_spotlight, deduplicate
-from .resize_normalize import resize_image
+from .resize_normalize import resize_image, random_orientation
 
 
 @click.command()
@@ -30,6 +31,9 @@ from .resize_normalize import resize_image
 @click.option("--skip-dedup", is_flag=True, help="Skip deduplication step.")
 @click.option("--spotlight-fields/--no-spotlight-fields", default=True,
               help="Apply spotlight effect to field images (default: on).")
+@click.option("--augment-orientation/--no-augment-orientation", default=True,
+              help="Randomly rotate/flip each image (D4 symmetry group). Default: on.")
+@click.option("--seed", default=42, help="RNG seed for orientation augmentation.")
 def main(
     raw_dirs: tuple[str],
     output: str,
@@ -37,6 +41,8 @@ def main(
     validation_split: int,
     skip_dedup: bool,
     spotlight_fields: bool,
+    augment_orientation: bool,
+    seed: int,
 ):
     """Build the final training dataset from raw generated images."""
     output_dir = Path(output)
@@ -110,7 +116,11 @@ def main(
         click.echo(f"Removed {len(removed)} near-duplicates, kept {len(passed)}")
 
     # Resize and save training images
-    click.echo(f"Processing {len(passed)} images to {size}x{size}...")
+    rng = random.Random(seed)
+    if augment_orientation:
+        click.echo(f"Processing {len(passed)} images to {size}x{size} with random orientation (seed={seed})...")
+    else:
+        click.echo(f"Processing {len(passed)} images to {size}x{size}...")
 
     # Split: last N for validation
     if validation_split > 0 and len(passed) > validation_split:
@@ -123,6 +133,8 @@ def main(
     for idx, (path, processed) in enumerate(tqdm(train_items, desc="Train set")):
         try:
             img = resize_image(processed, size)
+            if augment_orientation:
+                img = random_orientation(img, rng)
             img.save(train_dir / f"{idx:05d}.png", "PNG")
         except Exception:
             pass
@@ -130,6 +142,8 @@ def main(
     for idx, (path, processed) in enumerate(tqdm(val_items, desc="Val set")):
         try:
             img = resize_image(processed, size)
+            if augment_orientation:
+                img = random_orientation(img, rng)
             img.save(val_dir / f"{idx:05d}.png", "PNG")
         except Exception:
             pass
@@ -140,6 +154,8 @@ def main(
         for idx, (path, processed) in enumerate(tqdm(field_images, desc="Fields")):
             try:
                 img = resize_image(processed, size)
+                if augment_orientation:
+                    img = random_orientation(img, rng)
                 img.save(fields_dir / f"{idx:05d}.png", "PNG")
                 if spotlight_fields:
                     spotlit = apply_spotlight(img)
@@ -153,6 +169,8 @@ def main(
         for idx, (path, processed) in enumerate(tqdm(edge_images, desc="Edge heavy")):
             try:
                 img = resize_image(processed, size)
+                if augment_orientation:
+                    img = random_orientation(img, rng)
                 img.save(edge_dir / f"{idx:05d}.png", "PNG")
                 if spotlight_fields:
                     spotlit = apply_spotlight(img)
@@ -170,6 +188,8 @@ def main(
         "field_count": len(field_images),
         "edge_heavy_count": len(edge_images),
         "image_size": size,
+        "augment_orientation": augment_orientation,
+        "augment_seed": seed if augment_orientation else None,
         "raw_dirs": list(raw_dirs),
     }
     with open(output_dir / "dataset_stats.json", "w") as f:

@@ -53,7 +53,7 @@ def auto_levels(img: Image.Image, target_peak: float = 0.70, min_peak: float = 8
 # Spotlight effect for field-like images
 # ---------------------------------------------------------------------------
 
-def apply_spotlight(img: Image.Image, falloff: float = 2.0, radius: float = 0.65) -> Image.Image:
+def apply_spotlight(img: Image.Image, falloff: float = 1.6, radius: float = 0.8) -> Image.Image:
     """Apply radial gradient darkening to convert a field into a vignette.
 
     Center stays bright, edges fade to black following a power curve.
