@@ -117,6 +117,8 @@ def main(
 
     # Resize and save training images
     rng = random.Random(seed)
+    manifest = {}  # output_path -> source_path provenance tracking
+
     if augment_orientation:
         click.echo(f"Processing {len(passed)} images to {size}x{size} with random orientation (seed={seed})...")
     else:
@@ -135,7 +137,9 @@ def main(
             img = resize_image(processed, size)
             if augment_orientation:
                 img = random_orientation(img, rng)
-            img.save(train_dir / f"{idx:05d}.png", "PNG")
+            out_name = f"{idx:05d}.png"
+            img.save(train_dir / out_name, "PNG")
+            manifest[f"train/{out_name}"] = str(path)
         except Exception:
             pass
 
@@ -144,7 +148,9 @@ def main(
             img = resize_image(processed, size)
             if augment_orientation:
                 img = random_orientation(img, rng)
-            img.save(val_dir / f"{idx:05d}.png", "PNG")
+            out_name = f"{idx:05d}.png"
+            img.save(val_dir / out_name, "PNG")
+            manifest[f"val/{out_name}"] = str(path)
         except Exception:
             pass
 
@@ -156,10 +162,13 @@ def main(
                 img = resize_image(processed, size)
                 if augment_orientation:
                     img = random_orientation(img, rng)
-                img.save(fields_dir / f"{idx:05d}.png", "PNG")
+                out_name = f"{idx:05d}.png"
+                img.save(fields_dir / out_name, "PNG")
+                manifest[f"fields/{out_name}"] = str(path)
                 if spotlight_fields:
                     spotlit = apply_spotlight(img)
-                    spotlit.save(fields_spotlit_dir / f"{idx:05d}.png", "PNG")
+                    spotlit.save(fields_spotlit_dir / out_name, "PNG")
+                    manifest[f"fields_spotlit/{out_name}"] = str(path)
             except Exception:
                 pass
 
@@ -171,14 +180,21 @@ def main(
                 img = resize_image(processed, size)
                 if augment_orientation:
                     img = random_orientation(img, rng)
-                img.save(edge_dir / f"{idx:05d}.png", "PNG")
+                out_name = f"{idx:05d}.png"
+                img.save(edge_dir / out_name, "PNG")
+                manifest[f"edge_heavy/{out_name}"] = str(path)
                 if spotlight_fields:
                     spotlit = apply_spotlight(img)
-                    spotlit.save(edge_spotlit_dir / f"{idx:05d}.png", "PNG")
+                    spotlit.save(edge_spotlit_dir / out_name, "PNG")
+                    manifest[f"edge_heavy_spotlit/{out_name}"] = str(path)
             except Exception:
                 pass
 
-    # Save stats
+    # Save manifest and stats
+    with open(output_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
+    click.echo(f"  Manifest:           {len(manifest)} entries in {output_dir / 'manifest.json'}")
+
     stats = {
         "total_raw": len(raw_paths),
         "filter_stats": filter_stats,
