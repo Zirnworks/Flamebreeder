@@ -3,19 +3,19 @@
 # Upload dataset to Vast.ai instance and convert to NVIDIA ZIP format.
 #
 # Usage:
-#   ./upload_dataset.sh <instance_id> [local_data_dir] [resolution]
+#   ./upload_dataset.sh <ssh_host> <ssh_port> [local_data_dir] [resolution]
 #
 # Example:
-#   ./upload_dataset.sh 12345 ../datagen/data/processed/train 512
+#   ./upload_dataset.sh 69.162.73.55 1073 ~/Data/Praeceptor/data/consolidated 512
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SSH_HOST="${1:?Usage: upload_dataset.sh <ssh_host> <ssh_port> [local_data_dir] [resolution]}"
+SSH_PORT="${2:?Usage: upload_dataset.sh <ssh_host> <ssh_port> [local_data_dir] [resolution]}"
+LOCAL_DATA="${3:?Usage: upload_dataset.sh <ssh_host> <ssh_port> <local_data_dir> [resolution]}"
+RESOLUTION="${4:-512}"
 
-INSTANCE_ID="${1:?Usage: upload_dataset.sh <instance_id> [local_data_dir] [resolution]}"
-LOCAL_DATA="${2:-${PROJECT_DIR}/datagen/data/processed/train}"
-RESOLUTION="${3:-512}"
+SSH_CMD="ssh -p ${SSH_PORT} root@${SSH_HOST}"
 
 # Verify local data exists
 if [ ! -d "${LOCAL_DATA}" ]; then
@@ -25,32 +25,39 @@ fi
 
 IMAGE_COUNT=$(find "${LOCAL_DATA}" -name "*.png" | wc -l | tr -d ' ')
 echo "Uploading ${IMAGE_COUNT} images from ${LOCAL_DATA}..."
+echo "Destination: ${SSH_HOST}:/workspace/data/consolidated/"
 
-# Upload dataset
-vastai copy "${LOCAL_DATA}/" "${INSTANCE_ID}:/workspace/data/pngs/"
+# Upload PNGs and dataset.json via rsync
+rsync -avP --include='*.png' --include='dataset.json' --exclude='*' \
+    -e "ssh -p ${SSH_PORT}" \
+    "${LOCAL_DATA}/" \
+    "root@${SSH_HOST}:/workspace/data/consolidated/"
 
+echo ""
 echo "Upload complete. Converting to NVIDIA ZIP format..."
 
 # Convert to NVIDIA format on the instance
-vastai execute "${INSTANCE_ID}" "bash -c '
-    set -ex
-    cd /workspace/stylegan2-ada-pytorch
+${SSH_CMD} "bash -s" <<REMOTE
+set -ex
+cd /workspace/stylegan2-ada-pytorch
 
-    python dataset_tool.py \
-        --source=/workspace/data/pngs \
-        --dest=/workspace/data/fractals${RESOLUTION}.zip \
-        --resolution=${RESOLUTION}x${RESOLUTION}
+python dataset_tool.py \
+    --source=/workspace/data/consolidated \
+    --dest=/workspace/data/fractals${RESOLUTION}.zip \
+    --resolution=${RESOLUTION}x${RESOLUTION}
 
-    echo \"\"
-    echo \"Dataset ready: /workspace/data/fractals${RESOLUTION}.zip\"
-    python -c \"
+echo ""
+echo "Dataset ready: /workspace/data/fractals${RESOLUTION}.zip"
+python -c "
 import zipfile
-z = zipfile.ZipFile(\\\"/workspace/data/fractals${RESOLUTION}.zip\\\")
-pngs = [n for n in z.namelist() if n.endswith(\\\".png\\\")]
-print(f\\\"Images in ZIP: {len(pngs)}\\\")
-\"
-'" 2>&1
+z = zipfile.ZipFile('/workspace/data/fractals${RESOLUTION}.zip')
+pngs = [n for n in z.namelist() if n.endswith('.png')]
+jsons = [n for n in z.namelist() if n.endswith('.json')]
+print(f'Images in ZIP: {len(pngs)}')
+print(f'JSON files: {len(jsons)}')
+"
+REMOTE
 
 echo ""
 echo "Dataset uploaded and converted."
-echo "Next: ./start_training.sh ${INSTANCE_ID}"
+echo "Next: ./start_training.sh ${SSH_HOST} ${SSH_PORT}"
