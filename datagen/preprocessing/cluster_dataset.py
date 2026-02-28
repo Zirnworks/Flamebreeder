@@ -211,6 +211,319 @@ def cluster(analysis_dir: str, data_dir: str, k: int, grid_size: int, seed: int)
 
 
 # ---------------------------------------------------------------------------
+# filter-fields
+# ---------------------------------------------------------------------------
+
+@cli.command("filter-fields")
+@click.option("--data-dir", "-d", required=True, help="Directory of training PNGs.")
+@click.option("--output", "-o", required=True, help="Output directory for filtered images.")
+@click.option("--threshold", "-t", default=0.0, type=float,
+              help="Structure score threshold. Images below this are flagged. "
+                   "0 = auto (25th percentile).")
+@click.option("--dry-run", is_flag=True, help="Only compute scores, don't move anything.")
+@click.option("--blur-radius", default=10, help="Gaussian blur radius for suppressing micro-texture.")
+def filter_fields(data_dir: str, output: str, threshold: float, dry_run: bool,
+                  blur_radius: int):
+    """Identify spotlit images that lack macro-level structure.
+
+    Detects uniform fields vs structured shapes (blobs, rings, tendrils)
+    by measuring edge density on a blurred version of each image.
+
+    The approach:
+      1. Gaussian blur suppresses fine texture grain, keeps macro shapes.
+      2. Gradient magnitude on the blurred image detects shape boundaries.
+      3. Score = mean gradient in the inner 50% radius (where the spotlight
+         effect is minimal).
+
+    This is brightness-independent: dark-center rings score high (sharp
+    ring edges), bright uniform fields score low (no edges after blur).
+    """
+    from PIL import ImageFilter
+
+    data_dir = Path(data_dir).expanduser().resolve()
+    out_dir = Path(output).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = data_dir / "manifest.json"
+    if not manifest_path.exists():
+        click.echo(f"ERROR: No manifest.json in {data_dir}")
+        return
+
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    # Collect spotlit images
+    spotlit = {name: info for name, info in manifest.items()
+               if info.get("category") in ("fields_spotlit", "edge_heavy_spotlit")}
+    click.echo(f"Found {len(spotlit)} spotlit images to analyze")
+
+    # Precompute distance mask (all images are same size)
+    sample_path = data_dir / next(iter(spotlit))
+    sample_img = Image.open(sample_path).convert("L")
+    h, w = sample_img.size[1], sample_img.size[0]
+    cy, cx = h / 2, w / 2
+    radius = min(h, w) / 2
+    yy, xx = np.ogrid[:h, :w]
+    dist = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2) / radius
+    inner_mask = dist <= 0.50
+
+    scores = []
+    for name in tqdm(sorted(spotlit), desc="Analyzing"):
+        img_path = data_dir / name
+        if not img_path.exists():
+            continue
+
+        img = Image.open(img_path).convert("L")
+
+        # Gaussian blur to suppress micro-texture, keep macro shapes
+        blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        arr = np.array(blurred, dtype=np.float64)
+
+        # Gradient magnitude (central differences)
+        gy, gx = np.gradient(arr)
+        grad_mag = np.sqrt(gx ** 2 + gy ** 2)
+
+        # Mean gradient in inner region = edge density
+        edge_density = float(grad_mag[inner_mask].mean())
+
+        # Also grab the 90th percentile for robustness
+        edge_p90 = float(np.percentile(grad_mag[inner_mask], 90))
+
+        scores.append({
+            "name": name,
+            "category": spotlit[name]["category"],
+            "edge_density": round(edge_density, 4),
+            "edge_p90": round(edge_p90, 4),
+            "structure_score": round(edge_density, 4),
+        })
+
+    click.echo(f"Computed scores for {len(scores)} images")
+
+    # Sort by structure score ascending (worst first)
+    scores.sort(key=lambda s: s["structure_score"])
+
+    # Auto-threshold if not specified
+    all_scores = np.array([s["structure_score"] for s in scores])
+    if threshold <= 0:
+        threshold = float(np.percentile(all_scores, 25))
+        click.echo(f"Auto threshold (25th percentile): {threshold:.4f}")
+    else:
+        click.echo(f"Manual threshold: {threshold:.4f}")
+
+    flagged = [s for s in scores if s["structure_score"] < threshold]
+    kept = [s for s in scores if s["structure_score"] >= threshold]
+
+    click.echo(f"Flagged: {len(flagged)} / {len(scores)}")
+    click.echo(f"Kept:    {len(kept)} / {len(scores)}")
+
+    # Distribution summary
+    pcts = [10, 25, 50, 75, 90]
+    click.echo(f"\nScore distribution:")
+    for p in pcts:
+        v = float(np.percentile(all_scores, p))
+        click.echo(f"  p{p:02d}: {v:.4f}")
+    click.echo(f"  min: {float(all_scores.min()):.4f}")
+    click.echo(f"  max: {float(all_scores.max()):.4f}")
+
+    # Save full report
+    report = {
+        "threshold": threshold,
+        "blur_radius": blur_radius,
+        "total_spotlit": len(scores),
+        "flagged": len(flagged),
+        "kept": len(kept),
+        "scores": scores,
+    }
+    report_path = out_dir / "field_filter_report.json"
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+    click.echo(f"\nFull report: {report_path}")
+
+    if dry_run:
+        click.echo("Dry run — no images moved.")
+        _field_filter_grid(data_dir, out_dir, flagged[:36], "worst_36.png")
+        _field_filter_grid(data_dir, out_dir, kept[-36:], "best_36.png")
+        # Borderline images around the threshold
+        border_low = [s for s in scores
+                      if threshold * 0.85 <= s["structure_score"] < threshold][-18:]
+        border_high = [s for s in scores
+                       if threshold <= s["structure_score"] <= threshold * 1.15][:18]
+        _field_filter_grid(data_dir, out_dir, border_low + border_high,
+                           "borderline_36.png", label_split=len(border_low))
+        click.echo(f"Preview grids saved to {out_dir}")
+        return
+
+    # Symlink flagged images for review
+    flagged_dir = out_dir / "flagged"
+    if flagged_dir.exists():
+        for f in flagged_dir.iterdir():
+            if f.is_symlink():
+                f.unlink()
+    else:
+        flagged_dir.mkdir()
+
+    for s in flagged:
+        src = data_dir / s["name"]
+        dst = flagged_dir / s["name"]
+        if src.exists():
+            os.symlink(src, dst)
+
+    click.echo(f"Symlinked {len(flagged)} flagged images to {flagged_dir}")
+
+    # Generate preview grids
+    _field_filter_grid(data_dir, out_dir, flagged[:36], "worst_36.png")
+    _field_filter_grid(data_dir, out_dir, kept[-36:], "best_36.png")
+
+
+def _field_filter_grid(data_dir: Path, out_dir: Path, items: list,
+                       filename: str, label_split: int = -1):
+    """Build a 6-column preview grid with score annotations."""
+    from PIL import ImageDraw, ImageFont
+
+    if not items:
+        return
+
+    cols = 6
+    thumb = 128
+    rows = (len(items) + cols - 1) // cols
+    grid = Image.new("RGB", (cols * thumb, rows * thumb), (0, 0, 0))
+    draw = ImageDraw.Draw(grid)
+
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 11)
+    except Exception:
+        font = ImageFont.load_default()
+
+    for idx, s in enumerate(items):
+        row, col = divmod(idx, cols)
+        x = col * thumb
+        y = row * thumb
+
+        try:
+            img = Image.open(data_dir / s["name"]).convert("RGB")
+            img = img.resize((thumb, thumb), Image.LANCZOS)
+            grid.paste(img, (x, y))
+        except Exception:
+            pass
+
+        # Score label in bottom-left
+        label = f"{s['structure_score']:.2f}"
+        draw.text((x + 3, y + thumb - 16), label, fill=(255, 255, 0), font=font)
+
+        # Red/green dot for borderline grid
+        if label_split >= 0:
+            color = (255, 80, 80) if idx < label_split else (80, 255, 80)
+            draw.ellipse((x + thumb - 14, y + 4, x + thumb - 4, y + 14), fill=color)
+
+    grid.save(out_dir / filename)
+
+
+# ---------------------------------------------------------------------------
+# diversity-grids
+# ---------------------------------------------------------------------------
+
+@cli.command("diversity-grids")
+@click.option("--analysis-dir", "-a", required=True, help="Directory with embeddings and clusters.")
+@click.option("--data-dir", "-d", required=True, help="Directory of training PNGs.")
+@click.option("--cols", default=6, help="Images per row.")
+def diversity_grids(analysis_dir: str, data_dir: str, cols: int):
+    """Generate grids showing each cluster's full similarity spectrum.
+
+    Each grid has 3 labeled rows:
+      CORE     — images closest to the centroid
+      MIDDLE   — images at the median distance
+      FRINGE   — images furthest from the centroid
+    """
+    from PIL import ImageDraw, ImageFont
+
+    analysis_dir = Path(analysis_dir).expanduser().resolve()
+    data_dir = Path(data_dir).expanduser().resolve()
+
+    embeddings = np.load(analysis_dir / "embeddings.npy")
+    labels = np.load(analysis_dir / "labels.npy")
+    with open(analysis_dir / "filenames.json") as f:
+        filenames = json.load(f)
+    with open(analysis_dir / "clusters.json") as f:
+        clusters_data = json.load(f)
+
+    k = clusters_data["k"]
+    thumb_size = 128
+    label_width = 80  # pixels for row labels
+    row_labels = ["CORE", "MIDDLE", "FRINGE"]
+
+    grids_dir = analysis_dir / "diversity_grids"
+    if grids_dir.exists():
+        for f in grids_dir.glob("*.png"):
+            f.unlink()
+    grids_dir.mkdir(exist_ok=True)
+
+    click.echo(f"Generating diversity grids ({cols} cols, 3 rows) for {k} clusters...")
+
+    for cluster_info in tqdm(clusters_data["clusters"], desc="Diversity grids"):
+        cid = cluster_info["id"]
+        count = cluster_info["count"]
+        members = cluster_info["members"]
+
+        # Get member embeddings and sort by centroid similarity
+        mask = labels == cid
+        member_indices = np.where(mask)[0]
+        member_embeds = embeddings[member_indices]
+
+        centroid = member_embeds.mean(axis=0)
+        centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-8)
+        sims = member_embeds @ centroid_norm
+        order = np.argsort(-sims)  # descending: closest first
+
+        # Pick indices for each band
+        n = len(order)
+        mid_start = n // 2 - cols // 2
+        bands = {
+            "CORE": order[:cols],
+            "MIDDLE": order[max(0, mid_start):max(0, mid_start) + cols],
+            "FRINGE": order[-cols:] if n >= cols else order,
+        }
+
+        # Build grid image
+        grid_w = label_width + cols * thumb_size
+        grid_h = 3 * thumb_size
+        grid_img = Image.new("RGB", (grid_w, grid_h), (0, 0, 0))
+        draw = ImageDraw.Draw(grid_img)
+
+        for row_idx, label_text in enumerate(row_labels):
+            band = bands[label_text]
+            y_off = row_idx * thumb_size
+
+            # Draw row label
+            try:
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+            except Exception:
+                font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), label_text, font=font)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            tx = (label_width - tw) // 2
+            ty = y_off + (thumb_size - th) // 2
+            draw.text((tx, ty), label_text, fill=(180, 180, 180), font=font)
+
+            # Draw images
+            for col_idx, local_idx in enumerate(band[:cols]):
+                global_idx = member_indices[local_idx]
+                name = filenames[global_idx]
+                x_off = label_width + col_idx * thumb_size
+                try:
+                    img = Image.open(data_dir / name).convert("RGB")
+                    img = img.resize((thumb_size, thumb_size), Image.LANCZOS)
+                    grid_img.paste(img, (x_off, y_off))
+                except Exception:
+                    pass
+
+        grid_name = f"diversity_{cid:02d}_n{count}.png"
+        grid_img.save(grids_dir / grid_name)
+
+    click.echo(f"Saved {k} diversity grids to {grids_dir}")
+
+
+# ---------------------------------------------------------------------------
 # redundancy
 # ---------------------------------------------------------------------------
 
