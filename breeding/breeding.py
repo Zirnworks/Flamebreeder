@@ -176,6 +176,35 @@ def breed_style_mix(
     return ws
 
 
+def blend_class_labels(
+    c_a: list[float] | None,
+    c_b: list[float] | None,
+    ratio: float = 0.5,
+) -> list[float] | None:
+    """Blend two class label vectors for breeding offspring.
+
+    Args:
+        c_a: Parent A's class label (30 floats), or None.
+        c_b: Parent B's class label (30 floats), or None.
+        ratio: Blend ratio. 0.0 = pure A, 1.0 = pure B.
+
+    Returns:
+        Blended class label normalized to sum to 1, or None if both are None.
+    """
+    if c_a is None and c_b is None:
+        return None
+    if c_a is None:
+        return list(c_b)
+    if c_b is None:
+        return list(c_a)
+
+    blended = [(1 - ratio) * a + ratio * b for a, b in zip(c_a, c_b)]
+    total = sum(blended)
+    if total > 0:
+        blended = [v / total for v in blended]
+    return blended
+
+
 # Registry of breeding methods for the API
 BREEDING_METHODS = {
     "average": breed_average,

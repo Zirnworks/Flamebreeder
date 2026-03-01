@@ -1,17 +1,19 @@
 <script lang="ts">
-  import { selectedParents } from "../stores/genomes";
+  import { store } from "../stores/genomes.svelte";
   import { updateGenome } from "../api";
-  import type { GenomeEntry } from "../stores/genomes";
+  import { dominantCluster } from "../data/clusters";
+  import type { GenomeEntry } from "../stores/genomes.svelte";
 
   let { entry, onSelect }: { entry: GenomeEntry; onSelect?: (id: string) => void } = $props();
 
-  let isSelected = $derived.by(() => {
-    let parents: [string | null, string | null] = [null, null];
-    selectedParents.subscribe((v) => (parents = v))();
-    return parents[0] === entry.id || parents[1] === entry.id;
-  });
+  let isSelected = $derived(
+    store.selectedA === entry.id || store.selectedB === entry.id,
+  );
 
-  async function toggleFavorite() {
+  let cluster = $derived(dominantCluster(entry.genome.class_label));
+
+  async function toggleFavorite(e: Event) {
+    e.stopPropagation();
     const newFav = !entry.genome.favorite;
     await updateGenome(entry.id, undefined, newFav);
   }
@@ -31,9 +33,18 @@
 >
   <div class="image-container">
     <img src={entry.imageDataUrl} alt="Fractal flame" />
-    <div class="generation-badge">G{entry.genome.generation}</div>
-    {#if entry.genome.favorite}
-      <div class="favorite-badge">&#9733;</div>
+    <div class="badges-top">
+      <div class="generation-badge">G{entry.genome.generation}</div>
+      {#if entry.genome.favorite}
+        <button class="favorite-badge active" onclick={toggleFavorite}>&#9733;</button>
+      {:else}
+        <button class="favorite-badge" onclick={toggleFavorite}>&#9734;</button>
+      {/if}
+    </div>
+    {#if cluster}
+      <div class="cluster-tag" style="border-color: {cluster.color};">
+        {cluster.label}
+      </div>
     {/if}
   </div>
 </div>
@@ -70,10 +81,17 @@
     display: block;
   }
 
-  .generation-badge {
+  .badges-top {
     position: absolute;
     top: 6px;
     left: 6px;
+    right: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+
+  .generation-badge {
     background: rgba(0, 0, 0, 0.7);
     color: var(--text-secondary);
     padding: 2px 8px;
@@ -83,11 +101,38 @@
   }
 
   .favorite-badge {
-    position: absolute;
-    top: 6px;
-    right: 6px;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    color: var(--text-secondary);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 10px;
+    line-height: 1;
+  }
+
+  .favorite-badge.active {
     color: var(--gold);
-    font-size: 18px;
-    text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  }
+
+  .favorite-badge:hover {
+    color: var(--gold);
+    background: rgba(0, 0, 0, 0.7);
+  }
+
+  .cluster-tag {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    background: rgba(0, 0, 0, 0.75);
+    color: var(--text-secondary);
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-size: 10px;
+    border-left: 2px solid;
+    max-width: calc(100% - 16px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

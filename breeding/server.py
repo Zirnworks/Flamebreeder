@@ -1,8 +1,9 @@
 """FastAPI inference server for fractal flame GAN breeding.
 
 Runs as a sidecar process alongside the Tauri desktop app.
-Provides endpoints for generation, breeding, interpolation, and genome management.
-All latent operations happen in W-space for smooth, disentangled results.
+Provides endpoints for generation, breeding, interpolation, gene editing,
+and genome management. All latent operations happen in W-space for smooth,
+disentangled results. Class labels (30 clusters) steer the aesthetic family.
 """
 
 import base64
@@ -17,11 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .inference import FlameGenerator
-from .breeding import BREEDING_METHODS, mutate, truncate_w
+from .breeding import BREEDING_METHODS, blend_class_labels, mutate, truncate_w
 from .interpolation import interpolation_strip
 from .genome import Genome, GenomeStore
 
-app = FastAPI(title="Fractal Flame Breeder", version="0.2.0")
+app = FastAPI(title="Fractal Flame Breeder", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,6 +48,7 @@ def image_to_base64(img) -> str:
 class GenerateRequest(BaseModel):
     count: int = Field(default=4, ge=1, le=16)
     truncation_psi: float = Field(default=0.7, ge=0.0, le=1.0)
+    class_label: list[float] | None = None
 
 class GenomeResponse(BaseModel):
     id: str
@@ -71,6 +73,11 @@ class MutateRequest(BaseModel):
     rate: float = Field(default=0.1, ge=0.0, le=1.0)
     strength: float = Field(default=0.3, ge=0.0, le=2.0)
 
+class RemapRequest(BaseModel):
+    genome_id: str
+    class_label: list[float]
+    truncation_psi: float = Field(default=0.7, ge=0.0, le=1.0)
+
 class UpdateGenomeRequest(BaseModel):
     tags: list[str] | None = None
     favorite: bool | None = None
@@ -85,25 +92,33 @@ def health():
         "model_loaded": generator is not None,
         "latent_space": "w",
         "w_dim": generator.w_dim if generator else None,
+        "c_dim": generator.c_dim if generator else None,
+        "num_classes": generator.c_dim if generator else None,
     }
 
 
 @app.post("/generate", response_model=list[GenomeResponse])
 def generate(req: GenerateRequest):
-    """Generate random fractal flame images."""
+    """Generate random fractal flame images with optional class label."""
     if generator is None:
         raise HTTPException(503, "Model not loaded")
 
-    images, w_batch = generator.generate_random(
-        req.count, truncation_psi=req.truncation_psi
+    images, ws_batch, z_batch = generator.generate_random(
+        req.count,
+        truncation_psi=req.truncation_psi,
+        class_label=req.class_label,
     )
     results = []
 
-    for img, w in zip(images, w_batch):
+    for img, ws, z in zip(images, ws_batch, z_batch):
+        # Store the first layer's W for flat-vector breeding operations
+        w_flat = ws[0] if ws.ndim >= 2 else ws
         genome = Genome(
-            latent_vector=w.tolist(),
+            latent_vector=w_flat.tolist(),
             latent_space="w",
             truncation_psi=req.truncation_psi,
+            class_label=req.class_label,
+            seed_z=z.tolist(),
             generation=0,
         )
         store.add(genome)
@@ -135,19 +150,24 @@ def breed(req: BreedRequest):
     w_b = torch.tensor(parent_b.latent_vector, dtype=torch.float32)
 
     # Extract breeding-specific params (filter out server-level params)
-    psi = req.params.pop("truncation_psi", 0.7)
-    breed_params = {k: v for k, v in req.params.items()
-                    if k not in ("truncation_psi",)}
+    params = dict(req.params)
+    psi = params.pop("truncation_psi", 0.7)
+    ratio = params.get("ratio", 0.5)
 
     # For style_mix, inject num_ws from the generator
-    if req.method == "style_mix" and "num_ws" not in breed_params:
-        breed_params["num_ws"] = generator.num_ws
+    if req.method == "style_mix" and "num_ws" not in params:
+        params["num_ws"] = generator.num_ws
+
+    # Blend class labels from both parents
+    child_label = blend_class_labels(
+        parent_a.class_label, parent_b.class_label, ratio=ratio
+    )
 
     results = []
     parent_gen = max(parent_a.generation, parent_b.generation)
 
     for _ in range(req.count):
-        w_child = breed_fn(w_a, w_b, **breed_params)
+        w_child = breed_fn(w_a, w_b, **params)
 
         # W-space truncation
         if w_child.ndim == 1:
@@ -158,13 +178,13 @@ def breed(req: BreedRequest):
             # Style mixing returns (num_ws, w_dim) — truncate each layer
             w_child = generator.truncate_w(w_child, psi=psi)
             images = generator.generate_from_w(w_child.unsqueeze(0))
-            # Store the first layer's W for future flat-vector operations
             store_vector = w_child[0].tolist()
 
         genome = Genome(
             latent_vector=store_vector,
             latent_space="w",
             truncation_psi=psi,
+            class_label=child_label,
             parents=(parent_a.id, parent_b.id),
             breeding_method=req.method,
             breeding_params=req.params,
@@ -200,12 +220,17 @@ def interpolate(req: InterpolateRequest):
 
     results = []
     for i, (img, w) in enumerate(zip(images, w_strip)):
+        t = i / (req.steps - 1)
+        child_label = blend_class_labels(
+            genome_a.class_label, genome_b.class_label, ratio=t
+        )
         genome = Genome(
             latent_vector=w.tolist(),
             latent_space="w",
+            class_label=child_label,
             parents=(genome_a.id, genome_b.id),
             breeding_method=f"interpolate_{req.method}",
-            breeding_params={"t": i / (req.steps - 1)},
+            breeding_params={"t": t},
             generation=max(genome_a.generation, genome_b.generation),
         )
         store.add(genome)
@@ -236,10 +261,57 @@ def mutate_endpoint(req: MutateRequest):
     genome = Genome(
         latent_vector=w_child.tolist(),
         latent_space="w",
+        class_label=parent.class_label,
         parents=(parent.id, parent.id),
         breeding_method="mutate",
         breeding_params={"rate": req.rate, "strength": req.strength},
         generation=parent.generation + 1,
+    )
+    store.add(genome)
+
+    return GenomeResponse(
+        id=genome.id,
+        image_base64=image_to_base64(images[0]),
+        genome=genome.to_dict(),
+    )
+
+
+@app.post("/remap", response_model=GenomeResponse)
+def remap(req: RemapRequest):
+    """Re-map a genome's z-vector with a new class label (gene editing).
+
+    Takes the original z-vector stored in the genome, passes it through
+    the mapping network with a new class label to get a new w-vector,
+    then generates the image. This preserves structure while shifting
+    the aesthetic family.
+    """
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    parent = store.get(req.genome_id)
+    if parent is None:
+        raise HTTPException(404, "Genome not found")
+    if parent.seed_z is None:
+        raise HTTPException(
+            400, "Genome has no seed z-vector (bred genomes can't be remapped)"
+        )
+
+    z = torch.tensor([parent.seed_z], dtype=torch.float32)
+    images, ws = generator.generate_from_z(
+        z, class_label=req.class_label, truncation_psi=req.truncation_psi
+    )
+
+    w_flat = ws[0, 0] if ws.ndim >= 3 else ws[0]
+    genome = Genome(
+        latent_vector=w_flat.tolist(),
+        latent_space="w",
+        truncation_psi=req.truncation_psi,
+        class_label=req.class_label,
+        seed_z=parent.seed_z,
+        parents=(parent.id, parent.id),
+        breeding_method="remap",
+        breeding_params={"class_label": req.class_label},
+        generation=parent.generation,
     )
     store.add(genome)
 
@@ -304,12 +376,12 @@ def start_server(
     data_path = Path(data_dir).expanduser()
     data_path.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading StyleGAN2 model from {checkpoint_path}...")
+    print(f"Loading StyleGAN2-ADA model from {checkpoint_path}...")
     generator = FlameGenerator(checkpoint_path, device=device)
     store = GenomeStore(data_path / "genomes.json")
 
-    print(f"Model loaded: z_dim={generator.z_dim}, w_dim={generator.w_dim}, "
-          f"num_ws={generator.num_ws}")
+    print(f"Model loaded: z_dim={generator.z_dim}, c_dim={generator.c_dim}, "
+          f"w_dim={generator.w_dim}, num_ws={generator.num_ws}")
     print(f"Server starting on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
 

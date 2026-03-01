@@ -18,6 +18,9 @@ app/dist/
 # Data (symlinked to ~/Data/Praeceptor/data/)
 datagen/data
 
+# Vendor dependencies (cloned repos)
+vendor/
+
 # OS
 .DS_Store
 

@@ -13,18 +13,29 @@ pub struct GenomeResponse {
 }
 
 #[tauri::command]
-pub async fn generate_random(count: u32, truncation_psi: Option<f64>) -> Result<Vec<GenomeResponse>, String> {
+pub async fn generate_random(
+    count: u32,
+    truncation_psi: Option<f64>,
+    class_label: Option<Vec<f64>>,
+) -> Result<Vec<GenomeResponse>, String> {
     let psi = truncation_psi.unwrap_or(0.7);
     let client = reqwest::Client::new();
+    let mut body = serde_json::json!({ "count": count, "truncation_psi": psi });
+    if let Some(cl) = class_label {
+        body["class_label"] = serde_json::to_value(cl).unwrap();
+    }
+
     let resp = client
         .post(format!("{}/generate", SIDECAR_URL))
-        .json(&serde_json::json!({ "count": count, "truncation_psi": psi }))
+        .json(&body)
         .send()
         .await
         .map_err(|e| format!("Failed to connect to inference server: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<Vec<GenomeResponse>>()
@@ -55,7 +66,9 @@ pub async fn breed(
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<Vec<GenomeResponse>>()
@@ -84,7 +97,9 @@ pub async fn interpolate(
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<Vec<GenomeResponse>>()
@@ -111,7 +126,39 @@ pub async fn mutate_genome(
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
+    }
+
+    resp.json::<GenomeResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+#[tauri::command]
+pub async fn remap_genome(
+    genome_id: String,
+    class_label: Vec<f64>,
+    truncation_psi: Option<f64>,
+) -> Result<GenomeResponse, String> {
+    let psi = truncation_psi.unwrap_or(0.7);
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/remap", SIDECAR_URL))
+        .json(&serde_json::json!({
+            "genome_id": genome_id,
+            "class_label": class_label,
+            "truncation_psi": psi,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<GenomeResponse>()
@@ -129,7 +176,9 @@ pub async fn get_genome(genome_id: String) -> Result<GenomeResponse, String> {
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<GenomeResponse>()
@@ -147,12 +196,32 @@ pub async fn list_genomes() -> Result<Vec<Value>, String> {
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<Vec<Value>>()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+#[tauri::command]
+pub async fn check_server_health() -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+
+    let resp = client
+        .get(format!("{}/health", SIDECAR_URL))
+        .send()
+        .await
+        .map_err(|e| format!("Server not ready: {}", e))?;
+
+    resp.json::<Value>()
+        .await
+        .map_err(|e| format!("Failed to parse health response: {}", e))
 }
 
 #[tauri::command]
@@ -178,7 +247,9 @@ pub async fn update_genome(
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Server error: {}", resp.status()));
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
     }
 
     resp.json::<Value>()

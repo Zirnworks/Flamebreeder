@@ -1,40 +1,32 @@
 <script lang="ts">
-  import { genomes, selectedParents } from "../stores/genomes";
+  import { store } from "../stores/genomes.svelte";
   import { interpolate } from "../api";
-  import type { GenomeEntry, GenomeWithImage } from "../stores/genomes";
 
   let steps = $state(10);
   let loading = $state(false);
   let strip: { imageDataUrl: string; t: number }[] = $state([]);
   let error = $state("");
 
-  let parents = $derived.by(() => {
-    let sel: [string | null, string | null] = [null, null];
-    selectedParents.subscribe((v) => (sel = v))();
-
-    let map = new Map<string, GenomeEntry>();
-    genomes.subscribe((v) => (map = v))();
-
-    return {
-      a: sel[0] ? map.get(sel[0]) ?? null : null,
-      b: sel[1] ? map.get(sel[1]) ?? null : null,
-    };
-  });
-
-  let canInterpolate = $derived(parents.a !== null && parents.b !== null && !loading);
+  let parentA = $derived(
+    store.selectedA ? store.get(store.selectedA) ?? null : null,
+  );
+  let parentB = $derived(
+    store.selectedB ? store.get(store.selectedB) ?? null : null,
+  );
+  let canInterpolate = $derived(parentA !== null && parentB !== null && !loading);
 
   async function handleInterpolate() {
-    if (!parents.a || !parents.b) return;
+    if (!parentA || !parentB) return;
     loading = true;
     error = "";
     strip = [];
     try {
-      const results = await interpolate(parents.a.id, parents.b.id, steps);
+      const results = await interpolate(parentA.id, parentB.id, steps);
       strip = results.map((r: any, i: number) => ({
         imageDataUrl: `data:image/png;base64,${r.image_base64}`,
         t: i / (steps - 1),
       }));
-      genomes.addFromResponse(results);
+      store.addFromResponse(results);
     } catch (e) {
       error = String(e);
     }

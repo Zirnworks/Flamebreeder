@@ -8,6 +8,8 @@ export interface Genome {
   latent_vector: number[];
   latent_space: string;
   truncation_psi: number | null;
+  class_label: number[] | null;
+  seed_z: number[] | null;
   parents: [string, string] | null;
   breeding_method: string | null;
   breeding_params: Record<string, unknown> | null;
@@ -26,8 +28,9 @@ export interface GenomeWithImage {
 export async function generateRandom(
   count: number,
   truncationPsi: number = 0.7,
+  classLabel?: number[],
 ): Promise<GenomeWithImage[]> {
-  return invoke("generate_random", { count, truncationPsi });
+  return invoke("generate_random", { count, truncationPsi, classLabel });
 }
 
 export async function breed(
@@ -63,12 +66,24 @@ export async function mutateGenome(
   return invoke("mutate_genome", { genomeId, rate, strength });
 }
 
+export async function remapGenome(
+  genomeId: string,
+  classLabel: number[],
+  truncationPsi: number = 0.7,
+): Promise<GenomeWithImage> {
+  return invoke("remap_genome", { genomeId, classLabel, truncationPsi });
+}
+
 export async function getGenome(genomeId: string): Promise<GenomeWithImage> {
   return invoke("get_genome", { genomeId });
 }
 
 export async function listGenomes(): Promise<Genome[]> {
   return invoke("list_genomes");
+}
+
+export async function checkServerHealth(): Promise<Record<string, unknown>> {
+  return invoke("check_server_health");
 }
 
 export async function updateGenome(

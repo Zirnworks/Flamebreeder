@@ -1,36 +1,32 @@
 <script lang="ts">
-  import { genomes, selectedParents } from "../stores/genomes";
+  import { store } from "../stores/genomes.svelte";
   import { breed, generateRandom } from "../api";
-  import type { GenomeEntry } from "../stores/genomes";
+  import { uniformLabel } from "../data/clusters";
+  import ClusterSliders from "./ClusterSliders.svelte";
 
   let breedingMethod = $state("average");
   let offspringCount = $state(4);
   let ratio = $state(0.5);
   let truncationPsi = $state(0.7);
+  let classLabel = $state(uniformLabel());
   let loading = $state(false);
   let error = $state("");
+  let showSliders = $state(false);
 
-  let parents = $derived.by(() => {
-    let sel: [string | null, string | null] = [null, null];
-    selectedParents.subscribe((v) => (sel = v))();
-
-    let map = new Map<string, GenomeEntry>();
-    genomes.subscribe((v) => (map = v))();
-
-    return {
-      a: sel[0] ? map.get(sel[0]) ?? null : null,
-      b: sel[1] ? map.get(sel[1]) ?? null : null,
-    };
-  });
-
-  let canBreed = $derived(parents.a !== null && parents.b !== null && !loading);
+  let parentA = $derived(
+    store.selectedA ? store.get(store.selectedA) ?? null : null,
+  );
+  let parentB = $derived(
+    store.selectedB ? store.get(store.selectedB) ?? null : null,
+  );
+  let canBreed = $derived(parentA !== null && parentB !== null && !loading);
 
   async function handleGenerate() {
     loading = true;
     error = "";
     try {
-      const results = await generateRandom(4, truncationPsi);
-      genomes.addFromResponse(results);
+      const results = await generateRandom(offspringCount, truncationPsi, classLabel);
+      store.addFromResponse(results);
     } catch (e) {
       error = String(e);
     }
@@ -38,7 +34,7 @@
   }
 
   async function handleBreed() {
-    if (!parents.a || !parents.b) return;
+    if (!parentA || !parentB) return;
     loading = true;
     error = "";
     try {
@@ -47,13 +43,13 @@
           ? { ratio, truncation_psi: truncationPsi }
           : { truncation_psi: truncationPsi };
       const results = await breed(
-        parents.a.id,
-        parents.b.id,
+        parentA.id,
+        parentB.id,
         breedingMethod,
         params,
         offspringCount,
       );
-      genomes.addFromResponse(results);
+      store.addFromResponse(results);
     } catch (e) {
       error = String(e);
     }
@@ -62,6 +58,16 @@
 </script>
 
 <div class="panel">
+  <!-- Cluster selection for generation -->
+  <div class="cluster-section">
+    <button class="toggle-sliders" onclick={() => (showSliders = !showSliders)}>
+      {showSliders ? "Hide" : "Show"} Cluster Genes
+    </button>
+    {#if showSliders}
+      <ClusterSliders bind:value={classLabel} compact={true} />
+    {/if}
+  </div>
+
   <div class="controls">
     <button class="primary" onclick={handleGenerate} disabled={loading}>
       {loading ? "Generating..." : "Generate Random"}
@@ -69,9 +75,9 @@
 
     <div class="breed-section">
       <div class="parent-slots">
-        <div class="parent-slot" class:filled={parents.a}>
-          {#if parents.a}
-            <img src={parents.a.imageDataUrl} alt="Parent A" />
+        <div class="parent-slot" class:filled={parentA}>
+          {#if parentA}
+            <img src={parentA.imageDataUrl} alt="Parent A" />
           {:else}
             <span>Parent A</span>
           {/if}
@@ -79,9 +85,9 @@
 
         <span class="cross">&#215;</span>
 
-        <div class="parent-slot" class:filled={parents.b}>
-          {#if parents.b}
-            <img src={parents.b.imageDataUrl} alt="Parent B" />
+        <div class="parent-slot" class:filled={parentB}>
+          {#if parentB}
+            <img src={parentB.imageDataUrl} alt="Parent B" />
           {:else}
             <span>Parent B</span>
           {/if}
@@ -113,13 +119,13 @@
         </label>
 
         <label>
-          Offspring
+          Count
           <input
             type="number"
             min="1"
             max="8"
             bind:value={offspringCount}
-            style="width: 60px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px;"
+            style="width: 50px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px;"
           />
         </label>
       </div>
@@ -139,7 +145,30 @@
   .panel {
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
-    padding: 16px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .cluster-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .toggle-sliders {
+    align-self: flex-start;
+    font-size: 11px;
+    padding: 3px 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 12px;
+  }
+
+  .toggle-sliders:hover {
+    background: var(--border);
+    color: var(--text-primary);
   }
 
   .controls {
@@ -163,14 +192,14 @@
   }
 
   .parent-slot {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
     border: 2px dashed var(--border);
     border-radius: var(--radius);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-secondary);
     overflow: hidden;
   }
@@ -187,7 +216,7 @@
   }
 
   .cross {
-    font-size: 24px;
+    font-size: 20px;
     color: var(--text-secondary);
   }
 
@@ -206,7 +235,6 @@
   }
 
   .error {
-    margin-top: 8px;
     padding: 8px 12px;
     background: rgba(204, 68, 68, 0.15);
     border: 1px solid var(--danger);

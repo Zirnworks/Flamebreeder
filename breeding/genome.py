@@ -17,6 +17,8 @@ class Genome:
     latent_vector: list[float] = field(default_factory=list)
     latent_space: str = "w"  # "z" (FastGAN) or "w" (StyleGAN2)
     truncation_psi: float | None = None
+    class_label: list[float] | None = None  # 30-dim cluster weights
+    seed_z: list[float] | None = None  # original z-vector for gene editing
     parents: tuple[str, str] | None = None
     breeding_method: str | None = None
     breeding_params: dict | None = None

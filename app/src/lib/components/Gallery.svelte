@@ -1,21 +1,11 @@
 <script lang="ts">
-  import { genomes, selectedParents } from "../stores/genomes";
+  import { store } from "../stores/genomes.svelte";
   import GenomeCard from "./GenomeCard.svelte";
 
-  let entries = $derived.by(() => {
-    let map = new Map();
-    genomes.subscribe((v) => (map = v))();
-    return Array.from(map.values());
-  });
+  let entries = $derived(store.list);
 
   function handleSelect(id: string) {
-    selectedParents.update(([a, b]) => {
-      if (a === id) return [null, b];
-      if (b === id) return [a, null];
-      if (a === null) return [id, b];
-      if (b === null) return [a, id];
-      return [b, id];
-    });
+    store.toggleSelect(id);
   }
 </script>
 
