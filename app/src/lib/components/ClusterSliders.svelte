@@ -12,18 +12,45 @@
   } = $props();
 
   let expanded = $state(true);
+  let locked = $state(new Array(NUM_CLUSTERS).fill(false));
   // Initialize from compact prop (only captured once, which is fine —
   // compact is a static layout hint, not a reactive toggle)
   $effect(() => { expanded = !compact; });
 
+  let lockCount = $derived(locked.filter(Boolean).length);
+
+  /** Normalize so all values sum to 1, but leave locked sliders untouched. */
+  function normalizeWithLocks(label: number[]): number[] {
+    const lockedSum = label.reduce((s, v, i) => s + (locked[i] ? v : 0), 0);
+    const unlocked = label.map((v, i) => (locked[i] ? 0 : v));
+    const unlockedSum = unlocked.reduce((a, b) => a + b, 0);
+    const target = Math.max(0, 1 - lockedSum);
+
+    if (unlockedSum <= 0) {
+      // All unlocked are zero — distribute evenly among unlocked
+      const unlockCount = NUM_CLUSTERS - lockCount;
+      if (unlockCount === 0) return label;
+      return label.map((v, i) => (locked[i] ? v : target / unlockCount));
+    }
+
+    const scale = target / unlockedSum;
+    return label.map((v, i) => (locked[i] ? v : v * scale));
+  }
+
   function setSlider(idx: number, val: number) {
     value[idx] = val;
-    value = normalizeLabel([...value]);
+    value = normalizeWithLocks([...value]);
     onchange?.(value);
+  }
+
+  function toggleLock(idx: number) {
+    locked[idx] = !locked[idx];
+    locked = [...locked];
   }
 
   function selectPure(idx: number) {
     value = oneHotLabel(idx);
+    locked = new Array(NUM_CLUSTERS).fill(false);
     onchange?.(value);
   }
 
@@ -36,7 +63,11 @@
     for (let k = 0; k < topK; k++) {
       sparse[sorted[k].i] = sorted[k].v;
     }
-    value = normalizeLabel(sparse);
+    // Keep locked sliders at current values
+    for (let i = 0; i < NUM_CLUSTERS; i++) {
+      if (locked[i]) sparse[i] = value[i];
+    }
+    value = normalizeWithLocks(sparse);
     onchange?.(value);
   }
 
@@ -63,6 +94,11 @@
 
   <div class="controls-row">
     <button class="small" onclick={randomize}>Randomize</button>
+    {#if lockCount > 0}
+      <button class="small" onclick={() => { locked = new Array(NUM_CLUSTERS).fill(false); }}>
+        Clear Locks ({lockCount})
+      </button>
+    {/if}
     {#if compact}
       <button class="small" onclick={() => (expanded = !expanded)}>
         {expanded ? "Collapse" : "Expand"} Sliders
@@ -74,7 +110,15 @@
     <div class="sliders">
       {#each CLUSTERS as cluster (cluster.id)}
         {@const weight = value[cluster.id] ?? 0}
-        <div class="slider-row" class:active={weight > 0.01}>
+        <div class="slider-row" class:active={weight > 0.01} class:locked={locked[cluster.id]}>
+          <button
+            class="lock-btn"
+            class:is-locked={locked[cluster.id]}
+            title={locked[cluster.id] ? "Unlock" : "Lock"}
+            onclick={() => toggleLock(cluster.id)}
+          >
+            {locked[cluster.id] ? "\u{1F512}" : "\u{1F513}"}
+          </button>
           <button
             class="cluster-btn"
             style="border-left: 3px solid {cluster.color};"
@@ -159,6 +203,36 @@
 
   .slider-row:hover {
     opacity: 1;
+  }
+
+  .slider-row.locked {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    padding: 1px 4px;
+    margin: -1px -4px;
+  }
+
+  .lock-btn {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.3;
+    transition: opacity 0.15s;
+    line-height: 1;
+  }
+
+  .lock-btn:hover {
+    opacity: 0.7;
+  }
+
+  .lock-btn.is-locked {
+    opacity: 0.9;
   }
 
   .cluster-btn {

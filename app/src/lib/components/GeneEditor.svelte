@@ -9,6 +9,10 @@
   let truncationPsi = $state(0.7);
   let classLabel = $state(uniformLabel());
   let previewUrl = $state("");
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let abortController: AbortController | null = null;
+  // Track whether the user has changed anything (skip auto-remap on initial load)
+  let dirty = $state(false);
 
   let target = $derived(
     store.selectedA ? store.get(store.selectedA) ?? null : null,
@@ -27,10 +31,32 @@
       truncationPsi = target.genome.truncation_psi;
     }
     previewUrl = target?.imageDataUrl ?? "";
+    dirty = false;
   });
+
+  // Auto-remap on slider/psi changes (debounced)
+  $effect(() => {
+    // Read reactive deps
+    const _label = classLabel;
+    const _psi = truncationPsi;
+
+    if (!dirty || !canEdit) return;
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      handleRemap();
+    }, 300);
+  });
+
+  function markDirty() {
+    dirty = true;
+  }
 
   async function handleRemap() {
     if (!target || !canEdit) return;
+    // Cancel any in-flight request
+    if (abortController) abortController.abort();
+    abortController = new AbortController();
     loading = true;
     error = "";
     try {
@@ -38,6 +64,7 @@
       store.addSingle(result);
       previewUrl = `data:image/png;base64,${result.image_base64}`;
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       error = String(e);
     }
     loading = false;
@@ -57,7 +84,7 @@
             <img src={previewUrl} alt="Preview" />
           {/if}
           {#if loading}
-            <div class="loading-overlay">Remapping...</div>
+            <div class="loading-overlay"></div>
           {/if}
         </div>
         {#if !canEdit}
@@ -67,12 +94,12 @@
 
       <div class="controls-section">
         <h3>Cluster Genes</h3>
-        <ClusterSliders bind:value={classLabel} />
+        <ClusterSliders bind:value={classLabel} onchange={markDirty} />
 
         <div class="psi-control">
           <label>
             Truncation: {truncationPsi.toFixed(2)}
-            <input type="range" min="0" max="1" step="0.05" bind:value={truncationPsi} />
+            <input type="range" min="0" max="1" step="0.05" bind:value={truncationPsi} oninput={markDirty} />
           </label>
         </div>
 
