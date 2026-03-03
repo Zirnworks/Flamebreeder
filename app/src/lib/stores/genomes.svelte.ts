@@ -1,7 +1,8 @@
 /**
  * Genome state management using Svelte 5 runes.
  */
-import type { Genome, GenomeWithImage } from "../api";
+import type { Genome, GenomeWithImage, GenomeListing } from "../api";
+import { listGenomes, getGenomeImage } from "../api";
 
 export interface GenomeEntry {
   id: string;
@@ -17,6 +18,10 @@ class GenomeStore {
 
   get list(): GenomeEntry[] {
     return Array.from(this.entries.values());
+  }
+
+  get favorites(): GenomeEntry[] {
+    return this.list.filter((e) => e.genome.favorite);
   }
 
   get selectedParents(): [string | null, string | null] {
@@ -69,6 +74,22 @@ class GenomeStore {
       });
       this.entries = next;
     }
+  }
+
+  async loadFromServer(): Promise<number> {
+    const genomes = await listGenomes();
+    const favoritesWithImages = genomes.filter((g) => g.favorite && g.has_image);
+    let loaded = 0;
+    for (const g of favoritesWithImages) {
+      try {
+        const withImage = await getGenomeImage(g.id);
+        this.addSingle(withImage);
+        loaded++;
+      } catch {
+        // Image not available — skip silently
+      }
+    }
+    return loaded;
   }
 
   toggleSelect(id: string) {

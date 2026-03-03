@@ -1,23 +1,36 @@
 <script lang="ts">
   import { store } from "../stores/genomes.svelte";
   import GenomeCard from "./GenomeCard.svelte";
+  import Lightbox from "./Lightbox.svelte";
 
-  let entries = $derived(store.list);
+  let { filter }: { filter?: "favorites" } = $props();
+
+  let entries = $derived(filter === "favorites" ? store.favorites : store.list);
+  let lightboxSrc = $state("");
 
   function handleSelect(id: string) {
     store.toggleSelect(id);
   }
+
+  function handleDblClick(id: string) {
+    const entry = store.get(id);
+    if (entry) lightboxSrc = entry.imageDataUrl;
+  }
 </script>
+
+{#if lightboxSrc}
+  <Lightbox src={lightboxSrc} onclose={() => (lightboxSrc = "")} />
+{/if}
 
 <div class="gallery scrollable">
   {#if entries.length === 0}
     <div class="empty">
-      <p>No images yet. Generate some to get started.</p>
+      <p>{filter === "favorites" ? "No favorites yet. Star images to save them here." : "No images yet. Generate some to get started."}</p>
     </div>
   {:else}
     <div class="grid">
       {#each entries as entry (entry.id)}
-        <GenomeCard {entry} onSelect={handleSelect} />
+        <GenomeCard {entry} onSelect={handleSelect} onDblClick={handleDblClick} />
       {/each}
     </div>
   {/if}

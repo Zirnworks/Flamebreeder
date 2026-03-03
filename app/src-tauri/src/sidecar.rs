@@ -17,7 +17,7 @@ pub fn start_sidecar(_app: tauri::AppHandle) {
     let checkpoint = env::var("PRAECEPTOR_CHECKPOINT")
         .unwrap_or_else(|_| {
             let home = env::var("HOME").unwrap_or_else(|_| "/Users/zirn".to_string());
-            format!("{}/Data/Praeceptor/models/stylegan2-ada-fractals-k30-kimg880.pkl", home)
+            format!("{}/Data/Praeceptor/models/stylegan2-ada-fractals-k30-gamma10-kimg2720.pkl", home)
         });
 
     let port = env::var("PRAECEPTOR_PORT")

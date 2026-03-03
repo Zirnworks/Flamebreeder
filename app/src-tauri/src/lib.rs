@@ -16,6 +16,7 @@ pub fn run() {
             commands::mutate_genome,
             commands::remap_genome,
             commands::get_genome,
+            commands::get_genome_image,
             commands::list_genomes,
             commands::update_genome,
             commands::check_server_health,

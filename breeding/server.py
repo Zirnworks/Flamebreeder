@@ -34,6 +34,7 @@ app.add_middleware(
 # Global state — initialized on startup
 generator: FlameGenerator | None = None
 store: GenomeStore | None = None
+images_dir: Path | None = None
 
 
 def image_to_base64(img) -> str:
@@ -41,6 +42,12 @@ def image_to_base64(img) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def save_image(genome_id: str, img) -> None:
+    """Save a PIL Image to disk alongside the genome metadata."""
+    if images_dir is not None:
+        img.save(images_dir / f"{genome_id}.png")
 
 
 # --- Request/Response Models ---
@@ -122,6 +129,7 @@ def generate(req: GenerateRequest):
             generation=0,
         )
         store.add(genome)
+        save_image(genome.id, img)
         results.append(GenomeResponse(
             id=genome.id,
             image_base64=image_to_base64(img),
@@ -191,6 +199,7 @@ def breed(req: BreedRequest):
             generation=parent_gen + 1,
         )
         store.add(genome)
+        save_image(genome.id, images[0])
         results.append(GenomeResponse(
             id=genome.id,
             image_base64=image_to_base64(images[0]),
@@ -234,6 +243,7 @@ def interpolate(req: InterpolateRequest):
             generation=max(genome_a.generation, genome_b.generation),
         )
         store.add(genome)
+        save_image(genome.id, img)
         results.append(GenomeResponse(
             id=genome.id,
             image_base64=image_to_base64(img),
@@ -268,6 +278,7 @@ def mutate_endpoint(req: MutateRequest):
         generation=parent.generation + 1,
     )
     store.add(genome)
+    save_image(genome.id, images[0])
 
     return GenomeResponse(
         id=genome.id,
@@ -314,6 +325,7 @@ def remap(req: RemapRequest):
         generation=parent.generation,
     )
     store.add(genome)
+    save_image(genome.id, images[0])
 
     return GenomeResponse(
         id=genome.id,
@@ -355,10 +367,34 @@ def update_genome(genome_id: str, req: UpdateGenomeRequest):
     return genome.to_dict()
 
 
+@app.get("/genome/{genome_id}/image")
+def get_genome_image(genome_id: str):
+    """Serve a saved genome image from disk as base64."""
+    genome = store.get(genome_id)
+    if genome is None:
+        raise HTTPException(404, "Genome not found")
+
+    img_path = images_dir / f"{genome_id}.png"
+    if not img_path.exists():
+        raise HTTPException(404, "Image not found on disk")
+
+    img_b64 = base64.b64encode(img_path.read_bytes()).decode("utf-8")
+    return GenomeResponse(
+        id=genome.id,
+        image_base64=img_b64,
+        genome=genome.to_dict(),
+    )
+
+
 @app.get("/genomes")
 def list_genomes():
-    """List all saved genomes (metadata only, no images)."""
-    return [g.to_dict() for g in store.all()]
+    """List all saved genomes with metadata and image availability."""
+    results = []
+    for g in store.all():
+        d = g.to_dict()
+        d["has_image"] = (images_dir / f"{g.id}.png").exists() if images_dir else False
+        results.append(d)
+    return results
 
 
 def start_server(
@@ -369,12 +405,14 @@ def start_server(
     device: str = "mps",
 ):
     """Start the inference server."""
-    global generator, store
+    global generator, store, images_dir
 
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
     data_path = Path(data_dir).expanduser()
     data_path.mkdir(parents=True, exist_ok=True)
+    images_dir = data_path / "images"
+    images_dir.mkdir(exist_ok=True)
 
     print(f"Loading StyleGAN2-ADA model from {checkpoint_path}...")
     generator = FlameGenerator(checkpoint_path, device=device)

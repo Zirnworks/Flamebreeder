@@ -4,7 +4,7 @@
   import { dominantCluster } from "../data/clusters";
   import type { GenomeEntry } from "../stores/genomes.svelte";
 
-  let { entry, onSelect }: { entry: GenomeEntry; onSelect?: (id: string) => void } = $props();
+  let { entry, onSelect, onDblClick }: { entry: GenomeEntry; onSelect?: (id: string) => void; onDblClick?: (id: string) => void } = $props();
 
   let isSelected = $derived(
     store.selectedA === entry.id || store.selectedB === entry.id,
@@ -15,7 +15,14 @@
   async function toggleFavorite(e: Event) {
     e.stopPropagation();
     const newFav = !entry.genome.favorite;
-    await updateGenome(entry.id, undefined, newFav);
+    // Optimistic local update
+    store.updateGenome(entry.id, { favorite: newFav });
+    try {
+      await updateGenome(entry.id, undefined, newFav);
+    } catch {
+      // Revert on failure
+      store.updateGenome(entry.id, { favorite: !newFav });
+    }
   }
 
   function handleClick() {
@@ -29,6 +36,7 @@
   role="button"
   tabindex="0"
   onclick={handleClick}
+  ondblclick={() => onDblClick?.(entry.id)}
   onkeydown={(e) => e.key === "Enter" && handleClick()}
 >
   <div class="image-container">

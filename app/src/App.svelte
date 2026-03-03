@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { checkServerHealth } from "./lib/api";
+  import { store } from "./lib/stores/genomes.svelte";
   import Gallery from "./lib/components/Gallery.svelte";
   import BreedingPanel from "./lib/components/BreedingPanel.svelte";
   import InterpolationSlider from "./lib/components/InterpolationSlider.svelte";
   import GeneEditor from "./lib/components/GeneEditor.svelte";
 
-  let activeTab: "breed" | "interpolate" | "edit" = $state("breed");
+  let activeTab: "breed" | "interpolate" | "edit" | "favorites" = $state("breed");
   let serverReady = $state(false);
   let serverError = $state("");
+  let loadingStatus = $state("Loading model...");
 
   onMount(() => {
     pollHealth();
@@ -18,10 +20,12 @@
     for (let i = 0; i < 60; i++) {
       try {
         await checkServerHealth();
+        loadingStatus = "Loading saved favorites...";
+        const count = await store.loadFromServer();
+        if (count > 0) loadingStatus = `Loaded ${count} favorites`;
         serverReady = true;
         return;
       } catch {
-        // Server not ready yet — wait and retry
         await new Promise((r) => setTimeout(r, 1000));
       }
     }
@@ -37,7 +41,7 @@
       <code>python -m breeding.server ~/Data/Praeceptor/models/stylegan2-ada-fractals-k30-kimg880.pkl</code>
     {:else}
       <div class="spinner"></div>
-      <p>Loading model...</p>
+      <p>{loadingStatus}</p>
       <p class="hint">Starting inference server on MPS</p>
     {/if}
   </div>
@@ -64,12 +68,20 @@
         >
           Interpolate
         </button>
+        <button
+          class:active={activeTab === "favorites"}
+          onclick={() => (activeTab = "favorites")}
+        >
+          Favorites {store.favorites.length > 0 ? `(${store.favorites.length})` : ""}
+        </button>
       </nav>
     </header>
 
     <main>
       {#if activeTab === "edit"}
         <GeneEditor />
+      {:else if activeTab === "favorites"}
+        <Gallery filter="favorites" />
       {:else}
         <Gallery />
       {/if}

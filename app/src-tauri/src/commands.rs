@@ -225,6 +225,26 @@ pub async fn check_server_health() -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn get_genome_image(genome_id: String) -> Result<GenomeResponse, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/genome/{}/image", SIDECAR_URL, genome_id))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
+    }
+
+    resp.json::<GenomeResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+#[tauri::command]
 pub async fn update_genome(
     genome_id: String,
     tags: Option<Vec<String>>,

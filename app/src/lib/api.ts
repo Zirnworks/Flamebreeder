@@ -78,8 +78,16 @@ export async function getGenome(genomeId: string): Promise<GenomeWithImage> {
   return invoke("get_genome", { genomeId });
 }
 
-export async function listGenomes(): Promise<Genome[]> {
+export interface GenomeListing extends Genome {
+  has_image: boolean;
+}
+
+export async function listGenomes(): Promise<GenomeListing[]> {
   return invoke("list_genomes");
+}
+
+export async function getGenomeImage(genomeId: string): Promise<GenomeWithImage> {
+  return invoke("get_genome_image", { genomeId });
 }
 
 export async function checkServerHealth(): Promise<Record<string, unknown>> {
