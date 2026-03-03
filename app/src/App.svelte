@@ -6,8 +6,12 @@
   import BreedingPanel from "./lib/components/BreedingPanel.svelte";
   import InterpolationSlider from "./lib/components/InterpolationSlider.svelte";
   import GeneEditor from "./lib/components/GeneEditor.svelte";
+  import TimeformPanel from "./lib/components/TimeformPanel.svelte";
+  import TimeformViewer from "./lib/components/TimeformViewer.svelte";
+  import SplitPane from "./lib/components/SplitPane.svelte";
 
-  let activeTab: "breed" | "interpolate" | "edit" | "favorites" = $state("breed");
+  let activeTab: "breed" | "interpolate" | "edit" | "favorites" | "timeform" = $state("breed");
+  let timeformPreviewImages: string[] = $state([]);
   let serverReady = $state(false);
   let serverError = $state("");
   let loadingStatus = $state("Loading model...");
@@ -69,6 +73,12 @@
           Interpolate
         </button>
         <button
+          class:active={activeTab === "timeform"}
+          onclick={() => (activeTab = "timeform")}
+        >
+          Timeform {store.timeformKeyframes.length > 0 ? `(${store.timeformKeyframes.length})` : ""}
+        </button>
+        <button
           class:active={activeTab === "favorites"}
           onclick={() => (activeTab = "favorites")}
         >
@@ -80,6 +90,15 @@
     <main>
       {#if activeTab === "edit"}
         <GeneEditor />
+      {:else if activeTab === "timeform"}
+        <SplitPane initialSplit={40}>
+          {#snippet left()}
+            <Gallery />
+          {/snippet}
+          {#snippet right()}
+            <TimeformViewer images={timeformPreviewImages} />
+          {/snippet}
+        </SplitPane>
       {:else if activeTab === "favorites"}
         <Gallery filter="favorites" />
       {:else}
@@ -92,6 +111,8 @@
         <BreedingPanel />
       {:else if activeTab === "interpolate"}
         <InterpolationSlider />
+      {:else if activeTab === "timeform"}
+        <TimeformPanel onPreview={(imgs) => (timeformPreviewImages = imgs)} />
       {/if}
     </footer>
   </div>

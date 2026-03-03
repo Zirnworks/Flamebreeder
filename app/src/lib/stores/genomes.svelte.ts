@@ -92,6 +92,23 @@ class GenomeStore {
     return loaded;
   }
 
+  // --- Timeform keyframe selection ---
+  timeformKeyframes: string[] = $state([]);
+
+  addTimeformKeyframe(id: string) {
+    if (!this.timeformKeyframes.includes(id)) {
+      this.timeformKeyframes = [...this.timeformKeyframes, id];
+    }
+  }
+
+  removeTimeformKeyframe(id: string) {
+    this.timeformKeyframes = this.timeformKeyframes.filter((k) => k !== id);
+  }
+
+  clearTimeformKeyframes() {
+    this.timeformKeyframes = [];
+  }
+
   toggleSelect(id: string) {
     if (this.selectedA === id) {
       this.selectedA = null;

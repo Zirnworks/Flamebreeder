@@ -5,6 +5,7 @@ mod sidecar;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             sidecar::start_sidecar(app.handle().clone());
             Ok(())
@@ -15,6 +16,7 @@ pub fn run() {
             commands::interpolate,
             commands::mutate_genome,
             commands::remap_genome,
+            commands::export_timeform,
             commands::get_genome,
             commands::get_genome_image,
             commands::list_genomes,

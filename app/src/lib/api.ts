@@ -101,3 +101,29 @@ export async function updateGenome(
 ): Promise<Genome> {
   return invoke("update_genome", { genomeId, tags, favorite });
 }
+
+export interface TimeformConfig {
+  keyframeIds: string[];
+  totalFrames: number;
+  spacing: "uniform" | "adaptive";
+  textureSize: number;
+  totalDepth: number;
+  quadSize: number;
+  interpolationMethod: "slerp" | "lerp";
+}
+
+export async function exportTimeform(
+  config: TimeformConfig,
+  outputPath: string,
+): Promise<string> {
+  return invoke("export_timeform", {
+    keyframeIds: config.keyframeIds,
+    totalFrames: config.totalFrames,
+    spacing: config.spacing,
+    textureSize: config.textureSize,
+    totalDepth: config.totalDepth,
+    quadSize: config.quadSize,
+    interpolationMethod: config.interpolationMethod,
+    outputPath,
+  });
+}

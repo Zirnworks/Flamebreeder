@@ -64,3 +64,64 @@ def interpolation_strip(
     """
     fn = slerp if method == "slerp" else lerp
     return [fn(z1, z2, t) for t in torch.linspace(0, 1, steps)]
+
+
+def multi_keyframe_strip(
+    ws: list[torch.Tensor], total_steps: int, method: str = "slerp"
+) -> list[torch.Tensor]:
+    """Generate interpolation strip through multiple keyframes.
+
+    Distributes steps proportionally across segments based on W-space
+    arc length. Adjacent segments share their boundary keyframe
+    (deduplicated).
+
+    Args:
+        ws: List of keyframe W-vectors (at least 2).
+        total_steps: Total number of output frames (including endpoints).
+        method: "slerp" or "lerp".
+
+    Returns:
+        List of interpolated latent vectors.
+    """
+    if len(ws) < 2:
+        raise ValueError("Need at least 2 keyframes")
+    if len(ws) == 2:
+        return interpolation_strip(ws[0], ws[1], total_steps, method)
+
+    # Compute arc lengths between consecutive keyframes
+    arc_lengths = []
+    for i in range(len(ws) - 1):
+        arc_lengths.append(torch.norm(ws[i + 1] - ws[i]).item())
+
+    total_arc = sum(arc_lengths)
+    if total_arc < 1e-8:
+        # All keyframes are identical — distribute evenly
+        arc_lengths = [1.0] * len(arc_lengths)
+        total_arc = len(arc_lengths)
+
+    # Distribute steps proportionally (minimum 2 per segment)
+    n_segments = len(ws) - 1
+    remaining = total_steps - n_segments  # reserve 1 per segment for dedup
+    segment_steps = []
+    for arc in arc_lengths:
+        s = max(2, round((arc / total_arc) * remaining) + 1)
+        segment_steps.append(s)
+
+    # Adjust to hit exact total
+    while sum(segment_steps) - (n_segments - 1) > total_steps:
+        idx = max(range(n_segments), key=lambda i: segment_steps[i])
+        segment_steps[idx] -= 1
+    while sum(segment_steps) - (n_segments - 1) < total_steps:
+        idx = min(range(n_segments), key=lambda i: segment_steps[i])
+        segment_steps[idx] += 1
+
+    # Generate each segment and concatenate (dedup boundary keyframes)
+    result = []
+    for i in range(n_segments):
+        strip = interpolation_strip(ws[i], ws[i + 1], segment_steps[i], method)
+        if i == 0:
+            result.extend(strip)
+        else:
+            result.extend(strip[1:])  # skip first (duplicate of prev last)
+
+    return result

@@ -225,6 +225,54 @@ pub async fn check_server_health() -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn export_timeform(
+    keyframe_ids: Vec<String>,
+    total_frames: u32,
+    spacing: String,
+    texture_size: u32,
+    total_depth: f64,
+    quad_size: f64,
+    interpolation_method: String,
+    output_path: String,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+
+    let resp = client
+        .post(format!("{}/timeform", SIDECAR_URL))
+        .json(&serde_json::json!({
+            "keyframe_ids": keyframe_ids,
+            "total_frames": total_frames,
+            "spacing": spacing,
+            "texture_size": texture_size,
+            "total_depth": total_depth,
+            "quad_size": quad_size,
+            "interpolation_method": interpolation_method,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to inference server: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Server error {}: {}", status, text));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read GLB response: {}", e))?;
+
+    std::fs::write(&output_path, &bytes)
+        .map_err(|e| format!("Failed to write GLB file: {}", e))?;
+
+    Ok(output_path)
+}
+
+#[tauri::command]
 pub async fn get_genome_image(genome_id: String) -> Result<GenomeResponse, String> {
     let client = reqwest::Client::new();
     let resp = client

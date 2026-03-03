@@ -15,11 +15,13 @@ import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .inference import FlameGenerator
 from .breeding import BREEDING_METHODS, blend_class_labels, mutate, truncate_w
 from .interpolation import interpolation_strip
+from .timeform import create_timeform
 from .genome import Genome, GenomeStore
 
 app = FastAPI(title="Fractal Flame Breeder", version="0.3.0")
@@ -84,6 +86,15 @@ class RemapRequest(BaseModel):
     genome_id: str
     class_label: list[float]
     truncation_psi: float = Field(default=0.7, ge=0.0, le=1.0)
+
+class TimeformRequest(BaseModel):
+    keyframe_ids: list[str] = Field(..., min_length=2, max_length=16)
+    total_frames: int = Field(default=128, ge=16, le=512)
+    spacing: str = Field(default="uniform", pattern="^(uniform|adaptive)$")
+    texture_size: int = Field(default=256, ge=64, le=512)
+    total_depth: float = Field(default=10.0, ge=1.0, le=100.0)
+    quad_size: float = Field(default=5.0, ge=0.5, le=50.0)
+    interpolation_method: str = Field(default="slerp", pattern="^(slerp|lerp)$")
 
 class UpdateGenomeRequest(BaseModel):
     tags: list[str] | None = None
@@ -331,6 +342,37 @@ def remap(req: RemapRequest):
         id=genome.id,
         image_base64=image_to_base64(images[0]),
         genome=genome.to_dict(),
+    )
+
+
+@app.post("/timeform")
+def timeform_endpoint(req: TimeformRequest):
+    """Generate a Timeform GLB from keyframe genomes."""
+    if generator is None:
+        raise HTTPException(503, "Model not loaded")
+
+    keyframes = []
+    for kid in req.keyframe_ids:
+        g = store.get(kid)
+        if g is None:
+            raise HTTPException(404, f"Keyframe genome not found: {kid}")
+        keyframes.append(g)
+
+    glb_bytes = create_timeform(
+        generator=generator,
+        keyframes=keyframes,
+        total_frames=req.total_frames,
+        spacing=req.spacing,
+        texture_size=req.texture_size,
+        total_depth=req.total_depth,
+        quad_size=req.quad_size,
+        method=req.interpolation_method,
+    )
+
+    return Response(
+        content=glb_bytes,
+        media_type="model/gltf-binary",
+        headers={"Content-Disposition": "attachment; filename=timeform.glb"},
     )
 
 
